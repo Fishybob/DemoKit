@@ -14,7 +14,7 @@
  *
  * ==========================================================
 */
-#include "OnethinxCore01.h"
+#include "OnethinxCore01.h" // requires OnethinxCore B2
 #include "DemoKit01.h"
 #include "LoRaWAN_keys.h"
 #include "cy_pdl.h"
