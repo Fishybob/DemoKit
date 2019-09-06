@@ -27,16 +27,63 @@
  Include this file if using USB device: #include "cycfg_usbdev.h"
 */
 
+const char * paramErrors_txt[] = {
+    "param_OK",
+    "param_Invalid",
+    "param_OutOfRange",
+};
+
+const char * radioErrors_txt[] = {
+	"radio_OK",
+	"radio_BusyError",
+	"radio_BuckStartError",
+	"radio_XoscStartError",
+	"radio_Rc13mCalibError",
+	"radio_Rc64kCalibError",
+	"radio_PllCalibError",
+	"radio_PllLockError",
+	"radio_ImgCalibError",
+	"radio_AdcCalibError",
+	"radio_PaRampError",
+};
+
+const char * macErrors_txt[] = {
+	"mac_OK",
+	"mac_BusyError",
+	"mac_NotJoinedError",
+	"mac_ChannelsOccupiedError",
+	"mac_UnrecognizedKeyType",
+	"mac_EmptyPayload_Error",
+	"mac_RXheader_Error",
+	"mac_RX_MIC_Error",
+	"mac_RX_InvalidDevAddr",
+	"mac_InvalidPacket_Error",
+	"mac_RXtimeout_Error",
+	"mac_CRC_Error",
+};
+
+const char * systemErrors_txt[] = {
+	"system_OK",
+	"system_BusyError",
+	"system_NotStarted",
+	"system_IPCError",
+	"system_FlashWriteError",
+	"system_VersionMatchError",
+};
+
+
 /* Go to ../OnethinxCore/LoRaWAN_keys.h and fill in the fields of the TTN_OTAAkeys structure */
-coreConfiguration_t	coreConfig = {
-	.Join.KeysPtr = 		&TTN_OTAAkeys,
-	.Join.DataRate =		DR_0,
-	.Join.Power =			PWR_MAX,
-	.Join.MAXTries = 		10,
-	.TX.Confirmed = 		false,
-	.TX.DataRate = 			DR_0,
-	.TX.Power = 			PWR_MAX,
-	.TX.FPort = 			1,
+coreConfiguration_t coreConfig = {
+	.Join.KeysPtr =		&TTN_OTAAkeys,
+	.Join.DataRate =		DR_AUTO,
+	.Join.Power =		PWR_ATT_14dB,
+	.Join.MAXTries =		100,
+	.Join.SubBand_1st =	US_SUB_BAND_2,
+	.Join.SubBand_2nd =	US_SUB_BAND_NONE,
+	.TX.Confirmed =		false,
+	.TX.DataRate =		DR_0,
+	.TX.Power = 			PWR_ATT_14dB,
+	.TX.FPort =			1,
 };
 
 cy_stc_sysint_t PIN_BUTTON_SYSINT_CFG = {
@@ -47,7 +94,7 @@ cy_stc_sysint_t PIN_BUTTON_SYSINT_CFG = {
 void PinButtonInterruptHandler( void );
 
 /* OnethinxCore uses the following structures and variables, which should be defined globally */
-coreStatus_t status;
+coreStatus_t status, status2;
 errorStatus_t errorStatus;
 char RXbuffer[64];
 char TXbuffer[64];
@@ -55,6 +102,20 @@ char buffer[64];
 uint32_t handler_cnt = 0;
 bool handler_flag = false;
 cy_stc_scb_uart_context_t uartContext;
+
+sleepConfig_t sleepConfigP = {
+	.sleepMode = modeSleepDebugOn,
+	.sleepCores = coresM4,
+	.wakeUpPin = wakeUpPinHigh(true),
+	.wakeUpTime = wakeUpTimeOff
+};
+
+sleepConfig_t sleepConfigD = {
+	.sleepMode = modeSleepDebugOn,
+	.sleepCores = coresM4,
+	.wakeUpPin = wakeUpPinOff,
+	.wakeUpTime = wakeUpDelay(0,0,0,30)
+};
 
 /* Populate configuration structure */
 const cy_stc_scb_uart_config_t uartConfig =
@@ -84,6 +145,28 @@ const cy_stc_scb_uart_config_t uartConfig =
     .rxFifoIntEnableMask = 0UL,
     .txFifoTriggerLevel  = 0UL,
     .txFifoIntEnableMask = 0UL,
+};
+
+void printErrorStatus() {
+	/* check for errors */
+	errorStatus = LoRaWAN_GetError();
+	if( errorStatus.errorValue != errorStatus_NoError ){
+		/* errors encountered, list the 4 categories. See OnethinxCore01.h for the enumeration */
+		// sprintf( buffer, "\r\nParameter error: 0x%lx", (errorStatus.errorValue >> 0) & 0xFF );
+		sprintf( buffer, "%s", paramErrors_txt[(errorStatus.errorValue >> 0) & 0xFF] );
+		Cy_SCB_UART_PutString(UART_HW, buffer );
+		// sprintf( buffer, "\r\nRadio Error:     0x%lx", (errorStatus.errorValue >> 8) & 0xFF );
+		sprintf( buffer, ",%s", radioErrors_txt[(errorStatus.errorValue >> 8) & 0xFF] );
+		Cy_SCB_UART_PutString(UART_HW, buffer );
+		// sprintf( buffer, "\r\nMAC Error:       0x%lx", (errorStatus.errorValue >> 16) & 0xFF );
+		sprintf( buffer, ",%s", macErrors_txt[(errorStatus.errorValue >> 16) & 0xFF] );
+		Cy_SCB_UART_PutString(UART_HW, buffer );
+		// sprintf( buffer, "\r\nSystem Error:    0x%lx", (errorStatus.errorValue >> 24) & 0xFF );
+		sprintf( buffer, ",%s", systemErrors_txt[(errorStatus.errorValue >> 24) & 0xFF] );
+		Cy_SCB_UART_PutString(UART_HW, buffer );
+	} else {
+		Cy_SCB_UART_PutString(UART_HW, "OK" );
+	}
 };
 
 /*******************************************************************************
@@ -121,18 +204,23 @@ int main(void)
 	/* welcome string */
 	Cy_SCB_UART_Init( UART_HW, &UART_config, &uartContext);
 	Cy_SCB_UART_Enable( UART_HW );
-	Cy_SCB_UART_PutString(UART_HW, "\r-------------------------------------" );
-	Cy_SCB_UART_PutString(UART_HW, "\r--  Button Press readout example   --" );
-	Cy_SCB_UART_PutString(UART_HW, "\r-------------------------------------" );
+	Cy_SCB_UART_PutString(UART_HW, "\r\n------ Send On Switch example -------\r\n" );
 
+	printErrorStatus();
+
+	Cy_SCB_UART_PutString(UART_HW, "\r\nLoRaWAN_Init() " );
 	/* initialize radio with parameters in coreConfig */
 	status = LoRaWAN_Init(&coreConfig);
+	printErrorStatus();
 
+	Cy_SCB_UART_PutString(UART_HW, "\r\nLoRaWAN_Join() " );
 	/* send join using parameters in coreConfig, blocks until either success or MAXtries */
 	status = LoRaWAN_Join(true);
+	printErrorStatus();
 
 	/* check for successful join */
 	if (!status.mac.isJoined){
+		Cy_SCB_UART_PutString(UART_HW, "\r\nJOIN FAILED" );
 		while(1) {
 			LED_B_INV;
 			CyDelay(100);
@@ -149,10 +237,8 @@ int main(void)
 		LED_B_SET(LED_ON);
 
 		if( handler_flag ){
-			Cy_SCB_UART_PutString(UART_HW, "\r-------------" );
-
-			/* This delay can be taken out if actually using LoRaWAN send message */
-			CyDelay( 100 );
+			// status = LoRaWAN_GetStatus();
+			// printErrorStatus();
 
 			/* prepare a message */
 			j=0;
@@ -160,47 +246,41 @@ int main(void)
 			TXbuffer[j++] = handler_cnt       & 0xFF;
 
 			/* send with LoRaWAN */
+			Cy_SCB_UART_PutString(UART_HW, "\r\nLoRaWAN_Send() " );
 			status = LoRaWAN_Send((uint8_t *) TXbuffer, j, true);
-			if( status.system.errorStatus == system_BusyError ){
-				Cy_SCB_UART_PutString(UART_HW, "\rradio was busy, ignore" );
-			}
+			printErrorStatus();
 
-			/* check for errors */
-			errorStatus = LoRaWAN_GetError();
-			if( errorStatus.errorValue != errorStatus_NoError ){
-				/* errors encountered, list the 4 categories. See OnethinxCore01.h for the enumeration */
-				sprintf( buffer, "\rParameter error: 0x%x", (errorStatus.errorValue >> 24) && 0xFF );
-				Cy_SCB_UART_PutString(UART_HW, buffer );
-				sprintf( buffer, "\rRadio Error:     0x%x", (errorStatus.errorValue >> 12) && 0xFF );
-				Cy_SCB_UART_PutString(UART_HW, buffer );
-				sprintf( buffer, "\rMAC Error:       0x%x", (errorStatus.errorValue >> 8) && 0xFF );
-				Cy_SCB_UART_PutString(UART_HW, buffer );
-				sprintf( buffer, "\rSystem Error:    0x%x",  errorStatus.errorValue && 0xFF );
-				Cy_SCB_UART_PutString(UART_HW, buffer );
-			}
 
 			/* check for downlink messages */
 			if (status.mac.messageReceived) {
 				LoRaWAN_GetRXdata((uint8_t *) RXbuffer, status.mac.bytesToRead);
 				LoRaWAN_Send((uint8_t *) RXbuffer, status.mac.bytesToRead, true);
-				Cy_SCB_UART_PutString(UART_HW, "\rReceived a message: " );
+				Cy_SCB_UART_PutString(UART_HW, "\r\nReceived a message: " );
 				Cy_SCB_UART_PutString(UART_HW, RXbuffer );
 			}
-
-			sprintf( buffer, "\rhandler_cnt: %d", (int) handler_cnt ); Cy_SCB_UART_PutString(UART_HW, buffer );
 
 			/* clear the handler_flag */
 			handler_flag = false;
 
 		} //end if( handler_flag )
 
-		LED_B_SET( LED_OFF );
 		/* put in sleep and wait for next interrupt */
-		Cy_SCB_UART_PutString(UART_HW, "\rCM4 entering sleep..." );
-		if( CY_SYSPM_SUCCESS != Cy_SysPm_CpuEnterDeepSleep(CY_SYSPM_WAIT_FOR_INTERRUPT) ) {
-			Cy_SCB_UART_PutString(UART_HW, "\rfailed to go to sleep" );
-		}
+		sprintf( buffer, "\r\nLoRaWAN_Sleep(Pin) "); Cy_SCB_UART_PutString(UART_HW, buffer );
+		while (!Cy_SCB_IsTxComplete(UART_HW)) {
+		};
 
+		LED_B_SET( LED_OFF );
+		status2 = LoRaWAN_Sleep(&sleepConfigP);
+		handler_cnt++;
+		handler_flag = true;
+		sprintf( buffer, "Wake(#%d) ", (int) handler_cnt ); Cy_SCB_UART_PutString(UART_HW, buffer );
+		printErrorStatus();
+
+		/*
+	    if( CY_SYSPM_SUCCESS != Cy_SysPm_CpuEnterDeepSleep(CY_SYSPM_WAIT_FOR_INTERRUPT) ) {
+			Cy_SCB_UART_PutString(UART_HW, "\r\nfailed to go to sleep" );
+		}
+*/
 	} //end for
 } //end main
 
@@ -214,8 +294,8 @@ int main(void)
 void PinButtonInterruptHandler( void ){
 	/* First thing to do is to clear the interrupt, otherwise it will retrigger */
 	Cy_GPIO_ClearInterrupt( PIN_BUTTON_PORT, PIN_BUTTON_PIN );
-	handler_cnt++;
-	handler_flag = true;
+	// handler_cnt++;
+	// handler_flag = true;
 }
 
 /* [] END OF FILE */
